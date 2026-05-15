@@ -322,7 +322,7 @@ aws ec2 create-key-pair \
   --output text > ${KEY_NAME}.pem
 chmod 400 ${KEY_NAME}.pem
 
-# Get latest Ubuntu 22.04 LTS AMI (Canonical owner ID)
+# Get latest Ubuntu 24.04 LTS AMI (Canonical owner ID)
 AMI_ID=$(aws ec2 describe-images \
   --owners 099720109477 \
   --filters "Name=name,Values=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" \
