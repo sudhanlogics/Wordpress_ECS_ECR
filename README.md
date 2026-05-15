@@ -1,6 +1,6 @@
 # 🏗️ WordPress on AWS ECS — Production Deployment Guide
 
-> **Stack:** WordPress + PHP 8.1-FPM + Nginx · MySQL 8.0 (ECS sidecar) · Amazon EFS · ECS Fargate · ECR · ALB + ACM (HTTPS) · GitHub Actions CI/CD
+> **Stack:** WordPress + PHP 8.1-FPM + Nginx · MySQL 8.0 (ECS sidecar) · Amazon EFS · ECS Fargate · ECR · ALB + ACM (HTTPS)
 > **Region:** `ap-south-2` (Hyderabad)
 
 ---
@@ -22,25 +22,17 @@
 13. [ECS Cluster & Task Definition](#13--ecs-cluster--task-definition)
 14. [ALB + HTTPS with ACM](#14--alb--https-with-acm)
 15. [ECS Service](#15--ecs-service)
-16. [GitHub Actions CI/CD](#16--github-actions-cicd)
-17. [GitHub Secrets Reference](#17--github-secrets-reference)
-18. [Post-Deployment](#18--post-deployment)
-19. [Useful Commands](#19--useful-commands)
-20. [Troubleshooting](#20--troubleshooting)
-21. [Cleanup](#21--cleanup)
+16. [Post-Deployment](#16--post-deployment)
+17. [Useful Commands](#17--useful-commands)
+18. [Troubleshooting](#18--troubleshooting)
+19. [Cleanup](#19--cleanup)
 
 ---
 
 ## 1. 🧩 Architecture Overview
 
 ```
-GitHub Push (main)
-       │
-       ▼
-GitHub Actions
-  ├─ docker build
-  ├─ docker push ──► ECR (ap-south-2)
-  └─ ecs update-service
+Manual Deploy (see Step 9)
             │
             ▼
       Internet (HTTPS :443)
@@ -616,80 +608,6 @@ aws iam attach-role-policy \
 echo "✅ ecsWordpressTaskRole ready"
 ```
 
-### 12.3 GitHub Actions Deployment Role (OIDC)
-
-```bash
-# One-time per AWS account
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-
-# ⚠️ Replace YOUR_GITHUB_ORG
-aws iam create-role \
-  --role-name GitHubActionsWordPressRole \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::'"${ACCOUNT_ID}"':oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:YOUR_GITHUB_ORG/docker-wordpress:ref:refs/heads/main"
-        }
-      }
-    }]
-  }'
-
-aws iam put-role-policy \
-  --role-name GitHubActionsWordPressRole \
-  --policy-name DeployPolicy \
-  --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [
-      {
-        "Effect": "Allow",
-        "Action": [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-          "ecr:PutImage"
-        ],
-        "Resource": "*"
-      },
-      {
-        "Effect": "Allow",
-        "Action": [
-          "ecs:DescribeServices",
-          "ecs:UpdateService",
-          "ecs:RegisterTaskDefinition",
-          "ecs:DescribeTaskDefinition"
-        ],
-        "Resource": "*"
-      },
-      {
-        "Effect": "Allow",
-        "Action": "iam:PassRole",
-        "Resource": [
-          "arn:aws:iam::*:role/ecsTaskExecutionRole",
-          "arn:aws:iam::*:role/ecsWordpressTaskRole"
-        ]
-      }
-    ]
-  }'
-
-echo "✅ GitHubActionsWordPressRole ready"
-```
 
 ---
 
@@ -1015,105 +933,8 @@ aws ecs describe-services \
 
 ---
 
-## 16. 🤖 GitHub Actions CI/CD
 
-Create `.github/workflows/deploy.yml`:
-
-```yaml
-name: Build & Deploy to ECS
-
-on:
-  push:
-    branches:
-      - main
-
-env:
-  AWS_REGION: ap-south-2
-  ECR_REPOSITORY: docker-wordpress
-  ECS_CLUSTER: wordpress-cluster
-  ECS_SERVICE: wordpress-service
-  TASK_DEFINITION: .aws/task-definition.json
-  CONTAINER_NAME: wordpress
-
-permissions:
-  id-token: write
-  contents: read
-
-jobs:
-  deploy:
-    name: Build, Push & Deploy
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsWordPressRole
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Alternative: static credentials
-      # - uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push WordPress image
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag  $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-                      $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: ${{ env.TASK_DEFINITION }}
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-      - name: Deployment summary
-        run: |
-          echo "✅ Deployed: ${{ steps.build-image.outputs.image }}"
-          echo "🔗 https://${{ secrets.DOMAIN }}"
-```
-
----
-
-## 17. 🔐 GitHub Secrets Reference
-
-| Secret | Value | Required |
-|--------|-------|----------|
-| `AWS_ACCOUNT_ID` | `123456789012` | ✅ Always |
-| `DOMAIN` | `your-domain.com` | ✅ Always |
-| `AWS_ACCESS_KEY_ID` | `AKIA...` | Only if not using OIDC |
-| `AWS_SECRET_ACCESS_KEY` | `...` | Only if not using OIDC |
-
----
-
-## 18. ✅ Post-Deployment
+## 16. ✅ Post-Deployment
 
 ### Complete WordPress Setup
 
@@ -1154,7 +975,7 @@ aws ecs execute-command \
 
 ---
 
-## 19. 🛠️ Useful Commands
+## 17. 🛠️ Useful Commands
 
 ```bash
 # Tail logs (all containers)
@@ -1190,7 +1011,7 @@ ssh -i wordpress-bastion-key.pem ubuntu@${BASTION_IP}
 
 ---
 
-## 20. 🔍 Troubleshooting
+## 18. 🔍 Troubleshooting
 
 ### Private subnet — task fails to start / cannot pull image
 
@@ -1280,7 +1101,7 @@ echo "✅ New MySQL AP: $EFS_AP_DB"
 
 ---
 
-## 21. 🧹 Cleanup
+## 19. 🧹 Cleanup
 
 ```bash
 # ECS
@@ -1364,4 +1185,3 @@ echo "🧹 All resources deleted successfully."
 - [ ] ECR scan-on-push enabled
 - [ ] CloudWatch log retention set (30 days)
 - [ ] ACM certificate covers both `domain.com` and `www.domain.com`
-- [ ] GitHub Actions uses OIDC — no long-lived AWS keys in GitHub Secrets
