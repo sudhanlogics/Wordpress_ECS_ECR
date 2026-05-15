@@ -843,8 +843,7 @@ sed -e "s/ACCOUNT_ID/$ACCOUNT_ID/g" \
     -e "s|EFS_AP_DB|$EFS_AP_DB|g" \
     -e "s|IMAGE_TAG|latest|g" \
     .aws/task-definition.json > .aws/task-definition-rendered.json
----
-```bash
+
 aws ecs register-task-definition \
   --cli-input-json file://.aws/task-definition-rendered.json \
   --region $REGION
