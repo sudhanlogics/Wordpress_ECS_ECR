@@ -834,7 +834,7 @@ Replace these four placeholders before committing:
 ```
 
 Register the task definition:
-
+```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 sed -e "s/ACCOUNT_ID/$ACCOUNT_ID/g" \
@@ -843,7 +843,7 @@ sed -e "s/ACCOUNT_ID/$ACCOUNT_ID/g" \
     -e "s|EFS_AP_DB|$EFS_AP_DB|g" \
     -e "s|IMAGE_TAG|latest|g" \
     .aws/task-definition.json > .aws/task-definition-rendered.json
-
+---
 ```bash
 aws ecs register-task-definition \
   --cli-input-json file://.aws/task-definition-rendered.json \
